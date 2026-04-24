@@ -1,19 +1,41 @@
-# tngs-bootstrap RPM (Rocky Linux)
+# tngs-bootstrap RPM
 
-当前版本实现以下安装流程（双击安装 RPM 后触发）：
+Target OS: Rocky Linux / RHEL-compatible Linux.
 
-1. 检查 Docker，未安装则自动安装
-2. 检查 `hello-world` 镜像，没有则拉取
-3. 停止所有正在运行的容器，并清理 Docker 未使用缓存
-4. 启动 `hello-world` 容器（用于验证 Docker 可用）
+## Runtime behavior
 
-## 项目文件
+When the RPM is installed, the package `%post` script does two things:
 
-- `scripts/tngs-bootstrap.sh`: 核心安装脚本
-- `rpm/tngs-bootstrap.spec`: RPM 打包规范
-- `build-rpm.sh`: 构建 RPM
+1. Opens a terminal window in the active graphical desktop session and tails:
 
-## 构建 RPM（在 Rocky Linux）
+```bash
+/var/log/tngs-bootstrap.log
+```
+
+2. Starts the real installer asynchronously through `systemd-run`, delayed by 20 seconds to avoid `dnf` lock conflicts during the RPM install transaction.
+
+The installer then:
+
+1. Checks Docker and installs it if missing.
+2. Checks `hello-world:latest` and pulls it if missing.
+3. Stops all running containers and clears unused Docker cache.
+4. Runs the `hello-world` container.
+
+## Terminal support
+
+The log window is best effort. The launcher detects the active graphical user session with `loginctl`, then tries:
+
+1. `gnome-terminal`
+2. `konsole`
+3. `xterm`
+
+If no terminal opens, the install still runs. Check the log manually:
+
+```bash
+sudo tail -n 200 /var/log/tngs-bootstrap.log
+```
+
+## Build
 
 ```bash
 sudo dnf install -y rpm-build rpmdevtools tar dnf-plugins-core
@@ -21,19 +43,19 @@ chmod +x build-rpm.sh
 ./build-rpm.sh
 ```
 
-输出文件：
+Output:
 
 ```bash
-./out/RPMS/noarch/tngs-bootstrap-0.2.0-1.el9.noarch.rpm
+./out/RPMS/noarch/tngs-bootstrap-0.2.3-1.el9.noarch.rpm
 ```
 
-## 安装 RPM
+## Install
 
 ```bash
-sudo dnf install -y ./out/RPMS/noarch/tngs-bootstrap-0.2.0-1.el9.noarch.rpm
+sudo dnf install -y ./out/RPMS/noarch/tngs-bootstrap-0.2.3-1.el9.noarch.rpm
 ```
 
-安装后 `%post` 会自动执行脚本：
+## Manual rerun
 
 ```bash
 sudo /usr/local/libexec/tngs-bootstrap/tngs-bootstrap.sh
