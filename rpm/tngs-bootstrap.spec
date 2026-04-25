@@ -1,5 +1,5 @@
 Name:           tngs-bootstrap
-Version:        0.2.3
+Version:        0.2.4
 Release:        1%{?dist}
 Summary:        Bootstrap Docker and run hello-world for Rocky Linux
 
@@ -11,6 +11,7 @@ Source0:        %{name}-%{version}.tar.gz
 Requires(post): /usr/bin/bash
 Requires(post): /usr/bin/systemctl
 Requires(post): /usr/bin/systemd-run
+Requires(preun): /usr/bin/bash
 
 %description
 tngs-bootstrap installs Docker when missing, checks/pulls hello-world image,
@@ -62,10 +63,26 @@ SYSTEMD_RUN_RC=$?
   fi
 } >> "${LOG_FILE}" 2>&1 || :
 
+%preun
+if [ "$1" -eq 0 ]; then
+  LOG_FILE=/var/log/tngs-bootstrap.log
+  mkdir -p /var/log || :
+  touch "${LOG_FILE}" || :
+  {
+    echo "[$(date '+%F %T')] [tngs-bootstrap] RPM uninstall requested."
+  } >> "${LOG_FILE}" 2>&1 || :
+
+  /usr/local/libexec/tngs-bootstrap/scripts/open-log-terminal.sh "${LOG_FILE}" "tngs-bootstrap uninstalling" >/dev/null 2>&1 || :
+  /usr/local/libexec/tngs-bootstrap/scripts/tngs-uninstall.sh || :
+fi
+
 %files
 /usr/local/libexec/tngs-bootstrap
 
 %changelog
+* Sat Apr 25 2026 Codex <codex@example.local> - 0.2.4-1
+- Stop all running Docker containers during package uninstall
+
 * Fri Apr 24 2026 Codex <codex@example.local> - 0.2.3-1
 - Launch log terminal through active graphical user session
 

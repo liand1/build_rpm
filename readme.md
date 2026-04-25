@@ -21,6 +21,12 @@ The installer then:
 3. Stops all running containers and clears unused Docker cache.
 4. Runs the `hello-world` container.
 
+When the RPM is removed, the package `%preun` script:
+
+1. Cancels any pending delayed install unit.
+2. Opens the same log window when a graphical desktop session is available.
+3. Stops all running Docker containers.
+
 ## Terminal support
 
 The log window is best effort. The launcher detects the active graphical user session with `loginctl`, then tries:
@@ -46,13 +52,19 @@ chmod +x build-rpm.sh
 Output:
 
 ```bash
-./out/RPMS/noarch/tngs-bootstrap-0.2.3-1.el9.noarch.rpm
+./out/RPMS/noarch/tngs-bootstrap-0.2.4-1.el9.noarch.rpm
 ```
 
 ## Install
 
 ```bash
-sudo dnf install -y ./out/RPMS/noarch/tngs-bootstrap-0.2.3-1.el9.noarch.rpm
+sudo dnf install -y ./out/RPMS/noarch/tngs-bootstrap-0.2.4-1.el9.noarch.rpm
+```
+
+## Uninstall
+
+```bash
+sudo dnf remove -y tngs-bootstrap
 ```
 
 ## Manual rerun

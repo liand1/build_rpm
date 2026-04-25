@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAME="tngs-bootstrap"
-VERSION="0.2.3"
+VERSION="0.2.4"
 TOPDIR="${ROOT_DIR}/out"
 SOURCEDIR="${TOPDIR}/SOURCES"
 SPECDIR="${TOPDIR}/SPECS"
