@@ -4,38 +4,83 @@ Target OS: Rocky Linux / RHEL-compatible Linux.
 
 ## Runtime behavior
 
-When the RPM is installed, the package `%post` script does two things:
-
-1. Opens a terminal window in the active graphical desktop session and tails:
+When the RPM is installed, `%post` opens a terminal window for:
 
 ```bash
 /var/log/tngs-bootstrap.log
 ```
 
-2. Starts the real installer asynchronously through `systemd-run`, delayed by 20 seconds to avoid `dnf` lock conflicts during the RPM install transaction.
+Then it schedules the real installer with `systemd-run`, delayed by 20 seconds to avoid `dnf` lock conflicts during the RPM transaction.
 
-The installer then:
+The installer:
 
 1. Checks Docker and installs it if missing.
-2. Checks `hello-world:latest` and pulls it if missing.
-3. Stops all running containers and clears unused Docker cache.
-4. Runs the `hello-world` container.
+2. Creates the `docker` group if missing and adds the active graphical desktop user to it.
+3. Loads bundled Docker images from the RPM payload when the target images are missing:
 
-When the RPM is removed, the package `%preun` script:
+```bash
+/usr/local/libexec/tngs-bootstrap/images/mysql_latest.tar
+/usr/local/libexec/tngs-bootstrap/images/redis_latest.tar
+```
 
-1. Cancels any pending delayed install unit.
-2. Opens the same log window when a graphical desktop session is available.
-3. Stops all running Docker containers.
+The RPM package includes only these two image archives from the local `images` directory. They are packaged as explicit RPM sources (`Source1` and `Source2`), so the generated RPM should be roughly hundreds of MB, not KB.
+
+4. Creates host data directories if missing:
+
+```bash
+/tNGS/data/mysql
+/tNGS/data/redis/data
+```
+
+5. Starts MySQL:
+
+```bash
+docker run -v /tNGS/data/mysql/:/var/lib/mysql -v /etc/localtime:/etc/localtime:ro -p 3306:3306 -e MYSQL_ROOT_PASSWORD=123456 -e TZ=Asia/Shanghai --restart=always --name mysql-tngs -d dockerpull.pw/mysql:latest --lower_case_table_names=1
+```
+
+6. Starts Redis:
+
+```bash
+docker run -d --name redis-tngs --restart=always -p 6380:6379 -v /tNGS/data/redis/data:/data -v /etc/localtime:/etc/localtime:ro dockerpull.pw/redis:latest --requirepass 123456
+```
+
+`hello-world` is no longer started.
+
+Docker group changes do not affect an already-open login session. After install, the user must log out and log back in, or run:
+
+```bash
+newgrp docker
+```
+
+Then Docker commands can run without `sudo`.
+
+## Uninstall behavior
+
+When the RPM is removed, `%preun` opens the log window and prints:
+
+```text
+正在停止服务
+```
+
+Then it stops only the services started by this package:
+
+```bash
+mysql-tngs
+redis-tngs
+```
+
+It does not remove containers, images, or data directories.
 
 ## Terminal support
 
-The log window is best effort. The launcher detects the active graphical user session with `loginctl`, then tries:
+The log window is best effort. The launcher detects the active graphical user session with `loginctl`, reads the session environment from `/proc/<session-leader>/environ`, then tries:
 
 1. `gnome-terminal`
-2. `konsole`
-3. `xterm`
+2. `kgx`
+3. `konsole`
+4. `xterm`
 
-If no terminal opens, the install still runs. Check the log manually:
+If no terminal opens, check the log manually:
 
 ```bash
 sudo tail -n 200 /var/log/tngs-bootstrap.log
@@ -52,23 +97,30 @@ chmod +x build-rpm.sh
 Output:
 
 ```bash
-./out/RPMS/noarch/tngs-bootstrap-0.2.4-1.el9.noarch.rpm
+./out/RPMS/noarch/tngs-bootstrap-0.3.4-1.el9.noarch.rpm
+```
+
+Verify bundled image archives:
+
+```bash
+rpm -qpl ./out/RPMS/noarch/tngs-bootstrap-0.3.4-1.el9.noarch.rpm | grep '/images/'
+```
+
+Expected entries:
+
+```bash
+/usr/local/libexec/tngs-bootstrap/images/mysql_latest.tar
+/usr/local/libexec/tngs-bootstrap/images/redis_latest.tar
 ```
 
 ## Install
 
 ```bash
-sudo dnf install -y ./out/RPMS/noarch/tngs-bootstrap-0.2.4-1.el9.noarch.rpm
+sudo dnf install -y ./out/RPMS/noarch/tngs-bootstrap-0.3.4-1.el9.noarch.rpm
 ```
 
 ## Uninstall
 
 ```bash
 sudo dnf remove -y tngs-bootstrap
-```
-
-## Manual rerun
-
-```bash
-sudo /usr/local/libexec/tngs-bootstrap/tngs-bootstrap.sh
 ```

@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HELLO_IMAGE="${HELLO_IMAGE:-hello-world:latest}"
-HELLO_CONTAINER="${HELLO_CONTAINER:-tngs-hello-world}"
+MYSQL_IMAGE="${MYSQL_IMAGE:-dockerpull.pw/mysql:latest}"
+MYSQL_CONTAINER="${MYSQL_CONTAINER:-mysql-tngs}"
+MYSQL_IMAGE_ARCHIVE_NAME="${MYSQL_IMAGE_ARCHIVE_NAME:-mysql_latest.tar}"
+MYSQL_DATA_DIR="${MYSQL_DATA_DIR:-/tNGS/data/mysql}"
+MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-123456}"
+
+REDIS_IMAGE="${REDIS_IMAGE:-dockerpull.pw/redis:latest}"
+REDIS_CONTAINER="${REDIS_CONTAINER:-redis-tngs}"
+REDIS_IMAGE_ARCHIVE_NAME="${REDIS_IMAGE_ARCHIVE_NAME:-redis_latest.tar}"
+REDIS_DATA_DIR="${REDIS_DATA_DIR:-/tNGS/data/redis/data}"
+REDIS_PASSWORD="${REDIS_PASSWORD:-123456}"
+
+TZ_VALUE="${TZ_VALUE:-Asia/Shanghai}"
 LOG_FILE="${LOG_FILE:-/var/log/tngs-bootstrap.log}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HELLO_IMAGE_ARCHIVE="${HELLO_IMAGE_ARCHIVE:-${SCRIPT_DIR}/../images/hello-world_latest.tar}"
+IMAGE_DIR="${IMAGE_DIR:-${SCRIPT_DIR}/../images}"
 
 mkdir -p "$(dirname "${LOG_FILE}")"
 exec >>"${LOG_FILE}" 2>&1
@@ -18,12 +29,14 @@ run_step() {
   local step_name="$1"
   shift
 
-  log "===== START: ${step_name} ====="
+  log "===== 开始：${step_name} ====="
   "$@"
-  log "===== END: ${step_name} ====="
+  log "===== 完成：${step_name} ====="
 }
 
 resolve_docker_user() {
+  local session_user
+
   if [[ -n "${DOCKER_USER:-}" ]]; then
     echo "${DOCKER_USER}"
     return
@@ -39,20 +52,57 @@ resolve_docker_user() {
     return
   fi
 
+  session_user="$(resolve_active_graphical_user)"
+  if [[ -n "${session_user}" ]]; then
+    echo "${session_user}"
+    return
+  fi
+
+  echo ""
+}
+
+resolve_active_graphical_user() {
+  local sid
+  local state
+  local type
+  local remote
+  local user
+
+  if ! command -v loginctl >/dev/null 2>&1; then
+    echo ""
+    return
+  fi
+
+  while read -r sid _user _seat; do
+    [[ -n "${sid}" ]] || continue
+
+    state="$(loginctl show-session "${sid}" -p State --value 2>/dev/null || true)"
+    type="$(loginctl show-session "${sid}" -p Type --value 2>/dev/null || true)"
+    remote="$(loginctl show-session "${sid}" -p Remote --value 2>/dev/null || true)"
+
+    if [[ "${state}" == "active" && "${remote}" == "no" && ( "${type}" == "wayland" || "${type}" == "x11" ) ]]; then
+      user="$(loginctl show-session "${sid}" -p Name --value 2>/dev/null || true)"
+      if [[ -n "${user}" && "${user}" != "root" ]]; then
+        echo "${user}"
+        return
+      fi
+    fi
+  done < <(loginctl list-sessions --no-legend 2>/dev/null || true)
+
   echo ""
 }
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    log "This script must run as root."
+    log "当前脚本必须使用 root 权限运行。"
     exit 1
   fi
 }
 
 ensure_rocky_like() {
-  log "Checking operating system compatibility..."
+  log "正在检查操作系统兼容性..."
   if [[ ! -f /etc/os-release ]]; then
-    log "/etc/os-release not found."
+    log "未找到 /etc/os-release。"
     exit 1
   fi
 
@@ -62,7 +112,7 @@ ensure_rocky_like() {
     rocky|rhel|almalinux|centos)
       ;;
     *)
-      log "Unsupported distro ID: ${ID:-unknown}. Expected Rocky/RHEL-like."
+      log "不支持的系统发行版：${ID:-unknown}。需要 Rocky/RHEL 兼容系统。"
       exit 1
       ;;
   esac
@@ -71,17 +121,17 @@ ensure_rocky_like() {
 ensure_docker() {
   local docker_user
 
-  log "Checking Docker installation status..."
+  log "正在检查 Docker 安装状态..."
   if command -v docker >/dev/null 2>&1; then
-    log "Docker already installed."
+    log "Docker 已安装。"
   else
-    log "Docker not found. Installing Docker CE..."
+    log "未检测到 Docker，正在安装 Docker CE..."
     dnf install -y dnf-plugins-core
     dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
     dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   fi
 
-  log "Enabling and starting Docker service..."
+  log "正在启用并启动 Docker 服务..."
   systemctl enable --now docker
 
   docker_user="$(resolve_docker_user)"
@@ -91,49 +141,53 @@ ensure_docker() {
 configure_docker_permissions() {
   local docker_user="${1:-}"
 
-  log "Configuring Docker permissions..."
+  log "正在配置 Docker 用户权限..."
   if getent group docker >/dev/null 2>&1; then
-    log "Group exists: docker"
+    log "用户组已存在：docker"
   else
-    log "Creating group: docker"
+    log "正在创建用户组：docker"
     groupadd docker
   fi
 
   if [[ -z "${docker_user}" || "${docker_user}" == "root" ]]; then
-    log "No non-root Docker user resolved. Set DOCKER_USER explicitly if you want to grant Docker access."
+    log "未识别到需要授权的普通用户。如需指定用户，请设置 DOCKER_USER。"
     return
   fi
 
   if ! id "${docker_user}" >/dev/null 2>&1; then
-    log "User does not exist, cannot grant Docker access: ${docker_user}"
+    log "用户不存在，无法授予 Docker 权限：${docker_user}"
     exit 1
   fi
 
   if id -nG "${docker_user}" | tr ' ' '\n' | grep -Fxq docker; then
-    log "User already has Docker access: ${docker_user}"
+    log "用户已经拥有 Docker 权限：${docker_user}"
   else
-    log "Granting Docker access to user: ${docker_user}"
+    log "正在给用户授予 Docker 权限：${docker_user}"
     usermod -aG docker "${docker_user}"
-    log "User ${docker_user} added to docker group. Re-login or run 'newgrp docker' for the change to take effect."
+    log "用户 ${docker_user} 已加入 docker 用户组。"
   fi
+
+  log "Docker 权限提示：用户 ${docker_user} 需要注销后重新登录，或执行 'newgrp docker'，当前会话才能免 sudo 使用 docker。"
 }
 
-ensure_hello_image() {
+ensure_image() {
+  local image="$1"
+  local archive="$2"
   local load_output=""
   local loaded_image=""
   local loaded_image_id=""
 
-  log "Checking hello image availability: ${HELLO_IMAGE}"
-  if docker image inspect "${HELLO_IMAGE}" >/dev/null 2>&1; then
-    log "Image exists: ${HELLO_IMAGE}"
+  log "正在检查镜像是否存在：${image}"
+  if docker image inspect "${image}" >/dev/null 2>&1; then
+    log "镜像已存在：${image}"
   else
-    if [[ ! -f "${HELLO_IMAGE_ARCHIVE}" ]]; then
-      log "Image not found locally and archive is missing: ${HELLO_IMAGE_ARCHIVE}"
+    if [[ ! -f "${archive}" ]]; then
+      log "本地没有镜像，并且 RPM 内置镜像文件缺失：${archive}"
       exit 1
     fi
 
-    log "Image not found locally. Loading from archive: ${HELLO_IMAGE_ARCHIVE}"
-    load_output="$(docker load -i "${HELLO_IMAGE_ARCHIVE}" 2>&1)"
+    log "本地没有镜像，正在从 RPM 内置文件导入：${archive}"
+    load_output="$(docker load -i "${archive}" 2>&1)"
     while IFS= read -r line; do
       [[ -n "${line}" ]] && log "docker load: ${line}"
     done <<< "${load_output}"
@@ -141,68 +195,117 @@ ensure_hello_image() {
     loaded_image="$(printf '%s\n' "${load_output}" | sed -n 's/^Loaded image: //p' | tail -n 1)"
     loaded_image_id="$(printf '%s\n' "${load_output}" | sed -n 's/^Loaded image ID: //p' | tail -n 1)"
 
-    if [[ -n "${loaded_image}" && "${loaded_image}" != "${HELLO_IMAGE}" ]]; then
-      log "Retagging loaded image from ${loaded_image} to ${HELLO_IMAGE}"
-      docker tag "${loaded_image}" "${HELLO_IMAGE}"
+    if [[ -n "${loaded_image}" && "${loaded_image}" != "${image}" ]]; then
+      log "正在给导入的镜像重新打标签：${loaded_image} -> ${image}"
+      docker tag "${loaded_image}" "${image}"
     elif [[ -n "${loaded_image_id}" ]]; then
-      log "Retagging loaded image ID ${loaded_image_id} to ${HELLO_IMAGE}"
-      docker tag "${loaded_image_id}" "${HELLO_IMAGE}"
+      log "正在给导入的镜像 ID 重新打标签：${loaded_image_id} -> ${image}"
+      docker tag "${loaded_image_id}" "${image}"
     fi
 
-    log "Current hello-related images after load:"
-    docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep 'hello-world' || log "No hello-world images found in docker images output."
-
-    if docker image inspect "${HELLO_IMAGE}" >/dev/null 2>&1; then
-      log "Image loaded successfully: ${HELLO_IMAGE}"
+    if docker image inspect "${image}" >/dev/null 2>&1; then
+      log "镜像导入成功：${image}"
     else
-      log "Image archive loaded, but ${HELLO_IMAGE} is still unavailable."
+      log "镜像文件已导入，但仍无法找到目标镜像：${image}"
       exit 1
     fi
   fi
 }
 
-stop_all_containers() {
-  local running_ids
+ensure_bundled_archives() {
+  local mysql_archive="${IMAGE_DIR}/${MYSQL_IMAGE_ARCHIVE_NAME}"
+  local redis_archive="${IMAGE_DIR}/${REDIS_IMAGE_ARCHIVE_NAME}"
 
-  log "Checking for running containers..."
-  running_ids="$(docker ps -q || true)"
-  if [[ -n "${running_ids}" ]]; then
-    log "Stopping all running containers..."
-    docker stop ${running_ids} >/dev/null
-  else
-    log "No running containers to stop."
+  log "正在检查 RPM 内置 Docker 镜像文件目录：${IMAGE_DIR}"
+  if [[ ! -f "${mysql_archive}" ]]; then
+    log "缺少 RPM 内置 MySQL 镜像文件：${mysql_archive}"
+    exit 1
   fi
+
+  if [[ ! -f "${redis_archive}" ]]; then
+    log "缺少 RPM 内置 Redis 镜像文件：${redis_archive}"
+    exit 1
+  fi
+
+  log "已找到 RPM 内置 MySQL 镜像文件：${mysql_archive}"
+  log "已找到 RPM 内置 Redis 镜像文件：${redis_archive}"
 }
 
-clear_docker_cache() {
-  log "Clearing Docker cache (unused data)..."
-  docker system prune -f >/dev/null
+ensure_data_dirs() {
+  log "正在创建服务数据目录..."
+  mkdir -p "${MYSQL_DATA_DIR}" "${REDIS_DATA_DIR}"
 }
 
-start_hello_world() {
+ensure_mysql_container() {
+  local running
   local exists
 
-  log "Preparing hello-world container startup..."
-  exists="$(docker ps -a --filter "name=^/${HELLO_CONTAINER}$" --format '{{.Names}}' || true)"
-  if [[ "${exists}" == "${HELLO_CONTAINER}" ]]; then
-    log "Removing existing container: ${HELLO_CONTAINER}"
-    docker rm -f "${HELLO_CONTAINER}" >/dev/null || true
+  running="$(docker ps --filter "name=^/${MYSQL_CONTAINER}$" --format '{{.Names}}' || true)"
+  if [[ "${running}" == "${MYSQL_CONTAINER}" ]]; then
+    log "MySQL 容器已在运行：${MYSQL_CONTAINER}"
+    return
   fi
 
-  log "Starting hello-world container: ${HELLO_CONTAINER}"
-  # hello-world prints a verification message and exits immediately.
-  docker run --name "${HELLO_CONTAINER}" "${HELLO_IMAGE}" >/dev/null
+  exists="$(docker ps -a --filter "name=^/${MYSQL_CONTAINER}$" --format '{{.Names}}' || true)"
+  if [[ "${exists}" == "${MYSQL_CONTAINER}" ]]; then
+    log "正在启动已存在的 MySQL 容器：${MYSQL_CONTAINER}"
+    docker start "${MYSQL_CONTAINER}" >/dev/null
+    return
+  fi
+
+  log "正在创建并启动 MySQL 容器：${MYSQL_CONTAINER}"
+  docker run \
+    -v "${MYSQL_DATA_DIR}:/var/lib/mysql" \
+    -v /etc/localtime:/etc/localtime:ro \
+    -p 3306:3306 \
+    -e MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD}" \
+    -e TZ="${TZ_VALUE}" \
+    --restart=always \
+    --name "${MYSQL_CONTAINER}" \
+    -d "${MYSQL_IMAGE}" \
+    --lower_case_table_names=1 >/dev/null
+}
+
+ensure_redis_container() {
+  local running
+  local exists
+
+  running="$(docker ps --filter "name=^/${REDIS_CONTAINER}$" --format '{{.Names}}' || true)"
+  if [[ "${running}" == "${REDIS_CONTAINER}" ]]; then
+    log "Redis 容器已在运行：${REDIS_CONTAINER}"
+    return
+  fi
+
+  exists="$(docker ps -a --filter "name=^/${REDIS_CONTAINER}$" --format '{{.Names}}' || true)"
+  if [[ "${exists}" == "${REDIS_CONTAINER}" ]]; then
+    log "正在启动已存在的 Redis 容器：${REDIS_CONTAINER}"
+    docker start "${REDIS_CONTAINER}" >/dev/null
+    return
+  fi
+
+  log "正在创建并启动 Redis 容器：${REDIS_CONTAINER}"
+  docker run \
+    -d \
+    --name "${REDIS_CONTAINER}" \
+    --restart=always \
+    -p 6380:6379 \
+    -v "${REDIS_DATA_DIR}:/data" \
+    -v /etc/localtime:/etc/localtime:ro \
+    "${REDIS_IMAGE}" \
+    --requirepass "${REDIS_PASSWORD}" >/dev/null
 }
 
 main() {
-  run_step "Require root" require_root
-  run_step "Check Rocky-like OS" ensure_rocky_like
-  run_step "Ensure Docker" ensure_docker
-  run_step "Ensure hello image" ensure_hello_image
-  run_step "Stop all containers" stop_all_containers
-  run_step "Clear Docker cache" clear_docker_cache
-  run_step "Start hello-world container" start_hello_world
-  log "Done."
+  run_step "检查 root 权限" require_root
+  run_step "检查操作系统" ensure_rocky_like
+  run_step "检查并安装 Docker" ensure_docker
+  run_step "检查 RPM 内置镜像文件" ensure_bundled_archives
+  run_step "创建数据目录" ensure_data_dirs
+  run_step "导入 MySQL 镜像" ensure_image "${MYSQL_IMAGE}" "${IMAGE_DIR}/${MYSQL_IMAGE_ARCHIVE_NAME}"
+  run_step "导入 Redis 镜像" ensure_image "${REDIS_IMAGE}" "${IMAGE_DIR}/${REDIS_IMAGE_ARCHIVE_NAME}"
+  run_step "启动 MySQL 容器" ensure_mysql_container
+  run_step "启动 Redis 容器" ensure_redis_container
+  log "安装流程执行完成。"
 }
 
 main "$@"
