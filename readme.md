@@ -38,7 +38,27 @@ The RPM package includes only these two image archives from the local `images` d
 docker run -v /tNGS/data/mysql/:/var/lib/mysql -v /etc/localtime:/etc/localtime:ro -p 3306:3306 -e MYSQL_ROOT_PASSWORD=123456 -e TZ=Asia/Shanghai --restart=always --name mysql-tngs -d dockerpull.pw/mysql:latest --lower_case_table_names=1
 ```
 
-6. Starts Redis:
+6. Waits 15 seconds after MySQL starts, then executes SQL files from the RPM payload in filename order:
+
+```bash
+/usr/local/libexec/tngs-bootstrap/sql/*.sql
+```
+
+After successful SQL initialization, the installer writes:
+
+```bash
+/tNGS/data/mysql/.tngs_sql_initialized
+```
+
+If this marker exists, SQL initialization is skipped on later installs.
+
+SQL files are executed with MySQL binary mode enabled:
+
+```bash
+mysql --binary-mode=1 --default-character-set=utf8mb4 -uroot -p123456
+```
+
+7. Starts Redis:
 
 ```bash
 docker run -d --name redis-tngs --restart=always -p 6380:6379 -v /tNGS/data/redis/data:/data -v /etc/localtime:/etc/localtime:ro dockerpull.pw/redis:latest --requirepass 123456
@@ -97,13 +117,13 @@ chmod +x build-rpm.sh
 Output:
 
 ```bash
-./out/RPMS/noarch/tngs-bootstrap-0.3.4-1.el9.noarch.rpm
+./out/RPMS/noarch/tngs-bootstrap-0.3.6-1.el9.noarch.rpm
 ```
 
 Verify bundled image archives:
 
 ```bash
-rpm -qpl ./out/RPMS/noarch/tngs-bootstrap-0.3.4-1.el9.noarch.rpm | grep '/images/'
+rpm -qpl ./out/RPMS/noarch/tngs-bootstrap-0.3.6-1.el9.noarch.rpm | grep '/images/'
 ```
 
 Expected entries:
@@ -113,10 +133,16 @@ Expected entries:
 /usr/local/libexec/tngs-bootstrap/images/redis_latest.tar
 ```
 
+Verify bundled SQL files:
+
+```bash
+rpm -qpl ./out/RPMS/noarch/tngs-bootstrap-0.3.6-1.el9.noarch.rpm | grep '/sql/'
+```
+
 ## Install
 
 ```bash
-sudo dnf install -y ./out/RPMS/noarch/tngs-bootstrap-0.3.4-1.el9.noarch.rpm
+sudo dnf install -y ./out/RPMS/noarch/tngs-bootstrap-0.3.6-1.el9.noarch.rpm
 ```
 
 ## Uninstall

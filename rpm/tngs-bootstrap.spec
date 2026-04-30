@@ -1,5 +1,5 @@
 Name:           tngs-bootstrap
-Version:        0.3.4
+Version:        0.3.6
 Release:        1%{?dist}
 Summary:        安装TNGS和其相关的服务
 
@@ -28,6 +28,7 @@ images, and starts mysql-tngs and redis-tngs containers.
 %install
 install -d %{buildroot}/usr/local/libexec/tngs-bootstrap
 cp -a scripts %{buildroot}/usr/local/libexec/tngs-bootstrap/
+cp -a sql %{buildroot}/usr/local/libexec/tngs-bootstrap/
 cp -a rpm %{buildroot}/usr/local/libexec/tngs-bootstrap/
 install -d %{buildroot}/usr/local/libexec/tngs-bootstrap/images
 install -m 0644 %{SOURCE1} %{buildroot}/usr/local/libexec/tngs-bootstrap/images/mysql_latest.tar
@@ -84,6 +85,12 @@ fi
 /usr/local/libexec/tngs-bootstrap
 
 %changelog
+* Wed Apr 29 2026 Codex <codex@example.local> - 0.3.6-1
+- Run SQL initialization with MySQL binary mode enabled
+
+* Wed Apr 29 2026 Codex <codex@example.local> - 0.3.5-1
+- Package SQL files and run database initialization after MySQL starts
+
 * Tue Apr 28 2026 Codex <codex@example.local> - 0.3.4-1
 - Localize install and uninstall console output to Chinese
 

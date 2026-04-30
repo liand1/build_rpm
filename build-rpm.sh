@@ -3,27 +3,34 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAME="tngs-bootstrap"
-VERSION="0.3.4"
+VERSION="0.3.6"
 TOPDIR="${ROOT_DIR}/out"
 SOURCEDIR="${TOPDIR}/SOURCES"
 SPECDIR="${TOPDIR}/SPECS"
 BUILDDIR="${TOPDIR}/BUILD"
 RPMDIR="${TOPDIR}/RPMS"
 SRPMDIR="${TOPDIR}/SRPMS"
+WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/${NAME}.XXXXXX")"
+
+cleanup() {
+  rm -rf "${WORKDIR}"
+}
+trap cleanup EXIT
 
 echo "[build] preparing rpmbuild tree under ${TOPDIR}"
 mkdir -p "${SOURCEDIR}" "${SPECDIR}" "${BUILDDIR}" "${RPMDIR}" "${SRPMDIR}"
 
 echo "[build] creating source tarball"
-TMP_SRC="${SOURCEDIR}/${NAME}-${VERSION}"
-rm -rf "${TMP_SRC}"
+TMP_SRC="${WORKDIR}/${NAME}-${VERSION}"
+rm -f "${SOURCEDIR}/${NAME}-${VERSION}.tar.gz"
 mkdir -p "${TMP_SRC}"
 cp -r "${ROOT_DIR}/scripts" "${TMP_SRC}/scripts"
+cp -r "${ROOT_DIR}/sql" "${TMP_SRC}/sql"
 cp -r "${ROOT_DIR}/rpm" "${TMP_SRC}/rpm"
 cp "${ROOT_DIR}/build-rpm.sh" "${TMP_SRC}/build-rpm.sh"
 cp "${ROOT_DIR}/readme.md" "${TMP_SRC}/README.md"
 
-tar -C "${SOURCEDIR}" -czf "${SOURCEDIR}/${NAME}-${VERSION}.tar.gz" "${NAME}-${VERSION}"
+tar -C "${WORKDIR}" -czf "${SOURCEDIR}/${NAME}-${VERSION}.tar.gz" "${NAME}-${VERSION}"
 rm -rf "${TMP_SRC}"
 
 echo "[build] copying Docker image archives as explicit RPM sources"
@@ -47,5 +54,7 @@ if command -v rpm >/dev/null 2>&1; then
     ls -lh "${RPM_FILE}"
     echo "[build] bundled image files:"
     rpm -qpl "${RPM_FILE}" | grep '/images/' || true
+    echo "[build] bundled sql files:"
+    rpm -qpl "${RPM_FILE}" | grep '/sql/' || true
   fi
 fi

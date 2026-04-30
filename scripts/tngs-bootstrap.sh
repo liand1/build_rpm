@@ -6,6 +6,8 @@ MYSQL_CONTAINER="${MYSQL_CONTAINER:-mysql-tngs}"
 MYSQL_IMAGE_ARCHIVE_NAME="${MYSQL_IMAGE_ARCHIVE_NAME:-mysql_latest.tar}"
 MYSQL_DATA_DIR="${MYSQL_DATA_DIR:-/tNGS/data/mysql}"
 MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-123456}"
+MYSQL_SQL_WAIT_SECONDS="${MYSQL_SQL_WAIT_SECONDS:-15}"
+MYSQL_SQL_INIT_MARKER="${MYSQL_SQL_INIT_MARKER:-${MYSQL_DATA_DIR}/.tngs_sql_initialized}"
 
 REDIS_IMAGE="${REDIS_IMAGE:-dockerpull.pw/redis:latest}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-redis-tngs}"
@@ -17,6 +19,7 @@ TZ_VALUE="${TZ_VALUE:-Asia/Shanghai}"
 LOG_FILE="${LOG_FILE:-/var/log/tngs-bootstrap.log}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE_DIR="${IMAGE_DIR:-${SCRIPT_DIR}/../images}"
+SQL_DIR="${SQL_DIR:-${SCRIPT_DIR}/../sql}"
 
 mkdir -p "$(dirname "${LOG_FILE}")"
 exec >>"${LOG_FILE}" 2>&1
@@ -295,6 +298,63 @@ ensure_redis_container() {
     --requirepass "${REDIS_PASSWORD}" >/dev/null
 }
 
+wait_for_mysql_before_sql() {
+  log "MySQL 容器启动后等待 ${MYSQL_SQL_WAIT_SECONDS} 秒，再执行 SQL 初始化。"
+  sleep "${MYSQL_SQL_WAIT_SECONDS}"
+
+  log "正在检查 MySQL 服务是否可连接..."
+  for attempt in $(seq 1 30); do
+    if docker exec "${MYSQL_CONTAINER}" mysqladmin ping -uroot -p"${MYSQL_ROOT_PASSWORD}" --silent >/dev/null 2>&1; then
+      log "MySQL 服务已可连接。"
+      return
+    fi
+
+    log "MySQL 暂不可连接，继续等待（第 ${attempt}/30 次）..."
+    sleep 2
+  done
+
+  log "等待 MySQL 可连接超时，停止执行 SQL 初始化。"
+  exit 1
+}
+
+execute_sql_files() {
+  local sql_files=()
+  local sql_file
+
+  if [[ -f "${MYSQL_SQL_INIT_MARKER}" ]]; then
+    log "检测到 SQL 初始化标记文件，跳过重复初始化：${MYSQL_SQL_INIT_MARKER}"
+    return
+  fi
+
+  if [[ ! -d "${SQL_DIR}" ]]; then
+    log "SQL 目录不存在，跳过数据库初始化：${SQL_DIR}"
+    return
+  fi
+
+  mapfile -t sql_files < <(find "${SQL_DIR}" -maxdepth 1 -type f -name '*.sql' | sort)
+  if [[ "${#sql_files[@]}" -eq 0 ]]; then
+    log "SQL 目录中没有 .sql 文件，跳过数据库初始化：${SQL_DIR}"
+    return
+  fi
+
+  wait_for_mysql_before_sql
+
+  log "开始执行 SQL 初始化文件，目录：${SQL_DIR}"
+  for sql_file in "${sql_files[@]}"; do
+    log "正在执行 SQL 文件：${sql_file}"
+    log "SQL 文件大小：$(du -h "${sql_file}" | awk '{print $1}')"
+    docker exec -i "${MYSQL_CONTAINER}" mysql \
+      --binary-mode=1 \
+      --default-character-set=utf8mb4 \
+      -uroot \
+      -p"${MYSQL_ROOT_PASSWORD}" < "${sql_file}"
+    log "SQL 文件执行完成：${sql_file}"
+  done
+
+  touch "${MYSQL_SQL_INIT_MARKER}"
+  log "SQL 初始化完成，已写入标记文件：${MYSQL_SQL_INIT_MARKER}"
+}
+
 main() {
   run_step "检查 root 权限" require_root
   run_step "检查操作系统" ensure_rocky_like
@@ -304,6 +364,7 @@ main() {
   run_step "导入 MySQL 镜像" ensure_image "${MYSQL_IMAGE}" "${IMAGE_DIR}/${MYSQL_IMAGE_ARCHIVE_NAME}"
   run_step "导入 Redis 镜像" ensure_image "${REDIS_IMAGE}" "${IMAGE_DIR}/${REDIS_IMAGE_ARCHIVE_NAME}"
   run_step "启动 MySQL 容器" ensure_mysql_container
+  run_step "执行 SQL 初始化" execute_sql_files
   run_step "启动 Redis 容器" ensure_redis_container
   log "安装流程执行完成。"
 }
