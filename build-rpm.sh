@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAME="tngs-bootstrap"
-VERSION="0.3.6"
+VERSION="0.3.7"
 TOPDIR="${ROOT_DIR}/out"
 SOURCEDIR="${TOPDIR}/SOURCES"
 SPECDIR="${TOPDIR}/SPECS"
@@ -36,6 +36,7 @@ rm -rf "${TMP_SRC}"
 echo "[build] copying Docker image archives as explicit RPM sources"
 cp "${ROOT_DIR}/images/mysql_latest.tar" "${SOURCEDIR}/mysql_latest.tar"
 cp "${ROOT_DIR}/images/redis_latest.tar" "${SOURCEDIR}/redis_latest.tar"
+cp "${ROOT_DIR}/images/tngs-server-prod-1.0.0.tar" "${SOURCEDIR}/tngs-server-prod-1.0.0.tar"
 
 echo "[build] copying spec file"
 cp "${ROOT_DIR}/rpm/${NAME}.spec" "${SPECDIR}/"

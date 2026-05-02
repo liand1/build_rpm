@@ -1,5 +1,5 @@
 Name:           tngs-bootstrap
-Version:        0.3.6
+Version:        0.3.7
 Release:        1%{?dist}
 Summary:        安装TNGS和其相关的服务
 
@@ -9,6 +9,7 @@ BuildArch:      noarch
 Source0:        %{name}-%{version}.tar.gz
 Source1:        mysql_latest.tar
 Source2:        redis_latest.tar
+Source3:        tngs-server-prod-1.0.0.tar
 
 Requires(post): /usr/bin/bash
 Requires(post): /usr/bin/systemctl
@@ -16,8 +17,8 @@ Requires(post): /usr/bin/systemd-run
 Requires(preun): /usr/bin/bash
 
 %description
-tngs-bootstrap installs Docker when missing, loads bundled MySQL and Redis
-images, and starts mysql-tngs and redis-tngs containers.
+tngs-bootstrap installs Docker when missing, loads bundled MySQL, Redis,
+and tngs-server-prod images, and starts the related containers.
 
 %prep
 %autosetup
@@ -33,6 +34,7 @@ cp -a rpm %{buildroot}/usr/local/libexec/tngs-bootstrap/
 install -d %{buildroot}/usr/local/libexec/tngs-bootstrap/images
 install -m 0644 %{SOURCE1} %{buildroot}/usr/local/libexec/tngs-bootstrap/images/mysql_latest.tar
 install -m 0644 %{SOURCE2} %{buildroot}/usr/local/libexec/tngs-bootstrap/images/redis_latest.tar
+install -m 0644 %{SOURCE3} %{buildroot}/usr/local/libexec/tngs-bootstrap/images/tngs-server-prod-1.0.0.tar
 install -m 0755 build-rpm.sh %{buildroot}/usr/local/libexec/tngs-bootstrap/build-rpm.sh
 install -m 0644 README.md %{buildroot}/usr/local/libexec/tngs-bootstrap/README.md
 
@@ -85,6 +87,9 @@ fi
 /usr/local/libexec/tngs-bootstrap
 
 %changelog
+* Thu Apr 30 2026 Codex <codex@example.local> - 0.3.7-1
+- Start Redis before MySQL and add bundled tngs-server-prod startup
+
 * Wed Apr 29 2026 Codex <codex@example.local> - 0.3.6-1
 - Run SQL initialization with MySQL binary mode enabled
 

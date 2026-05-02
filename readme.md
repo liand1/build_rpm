@@ -21,24 +21,34 @@ The installer:
 ```bash
 /usr/local/libexec/tngs-bootstrap/images/mysql_latest.tar
 /usr/local/libexec/tngs-bootstrap/images/redis_latest.tar
+/usr/local/libexec/tngs-bootstrap/images/tngs-server-prod-1.0.0.tar
 ```
 
-The RPM package includes only these two image archives from the local `images` directory. They are packaged as explicit RPM sources (`Source1` and `Source2`), so the generated RPM should be roughly hundreds of MB, not KB.
+The RPM package includes these image archives from the local `images` directory. They are packaged as explicit RPM sources (`Source1`, `Source2`, and `Source3`), so the generated RPM should be roughly hundreds of MB, not KB.
 
 4. Creates host data directories if missing:
 
 ```bash
 /tNGS/data/mysql
 /tNGS/data/redis/data
+/tngs_project_prod
+/project
+/tNGS/server/logs
 ```
 
-5. Starts MySQL:
+5. Starts Redis:
+
+```bash
+docker run -d --name redis-tngs --restart=always -p 6380:6379 -v /tNGS/data/redis/data:/data -v /etc/localtime:/etc/localtime:ro dockerpull.pw/redis:latest --requirepass 123456
+```
+
+6. Starts MySQL:
 
 ```bash
 docker run -v /tNGS/data/mysql/:/var/lib/mysql -v /etc/localtime:/etc/localtime:ro -p 3306:3306 -e MYSQL_ROOT_PASSWORD=123456 -e TZ=Asia/Shanghai --restart=always --name mysql-tngs -d dockerpull.pw/mysql:latest --lower_case_table_names=1
 ```
 
-6. Waits 15 seconds after MySQL starts, then executes SQL files from the RPM payload in filename order:
+7. Waits 15 seconds after MySQL starts, then executes SQL files from the RPM payload in filename order:
 
 ```bash
 /usr/local/libexec/tngs-bootstrap/sql/*.sql
@@ -58,10 +68,10 @@ SQL files are executed with MySQL binary mode enabled:
 mysql --binary-mode=1 --default-character-set=utf8mb4 -uroot -p123456
 ```
 
-7. Starts Redis:
+8. Starts `tngs-server-prod` last:
 
 ```bash
-docker run -d --name redis-tngs --restart=always -p 6380:6379 -v /tNGS/data/redis/data:/data -v /etc/localtime:/etc/localtime:ro dockerpull.pw/redis:latest --requirepass 123456
+docker run -d -e env=prod -p 58081:8080 --name tngs-server-prod -v /var/run/docker.sock:/var/run/docker.sock -v /tngs_project_prod:/tngs_project_prod -v /project:/project -v /tNGS/server/logs:/tNGS/server/logs tngs-server-prod:1.0.0
 ```
 
 `hello-world` is no longer started.
@@ -87,6 +97,7 @@ Then it stops only the services started by this package:
 ```bash
 mysql-tngs
 redis-tngs
+tngs-server-prod
 ```
 
 It does not remove containers, images, or data directories.
@@ -117,13 +128,13 @@ chmod +x build-rpm.sh
 Output:
 
 ```bash
-./out/RPMS/noarch/tngs-bootstrap-0.3.6-1.el9.noarch.rpm
+./out/RPMS/noarch/tngs-bootstrap-0.3.7-1.el9.noarch.rpm
 ```
 
 Verify bundled image archives:
 
 ```bash
-rpm -qpl ./out/RPMS/noarch/tngs-bootstrap-0.3.6-1.el9.noarch.rpm | grep '/images/'
+rpm -qpl ./out/RPMS/noarch/tngs-bootstrap-0.3.7-1.el9.noarch.rpm | grep '/images/'
 ```
 
 Expected entries:
@@ -131,18 +142,19 @@ Expected entries:
 ```bash
 /usr/local/libexec/tngs-bootstrap/images/mysql_latest.tar
 /usr/local/libexec/tngs-bootstrap/images/redis_latest.tar
+/usr/local/libexec/tngs-bootstrap/images/tngs-server-prod-1.0.0.tar
 ```
 
 Verify bundled SQL files:
 
 ```bash
-rpm -qpl ./out/RPMS/noarch/tngs-bootstrap-0.3.6-1.el9.noarch.rpm | grep '/sql/'
+rpm -qpl ./out/RPMS/noarch/tngs-bootstrap-0.3.7-1.el9.noarch.rpm | grep '/sql/'
 ```
 
 ## Install
 
 ```bash
-sudo dnf install -y ./out/RPMS/noarch/tngs-bootstrap-0.3.6-1.el9.noarch.rpm
+sudo dnf install -y ./out/RPMS/noarch/tngs-bootstrap-0.3.7-1.el9.noarch.rpm
 ```
 
 ## Uninstall

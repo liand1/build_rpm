@@ -5,6 +5,7 @@ LOG_FILE="${LOG_FILE:-/var/log/tngs-bootstrap.log}"
 INSTALL_UNIT="${INSTALL_UNIT:-tngs-bootstrap-install}"
 MYSQL_CONTAINER="${MYSQL_CONTAINER:-mysql-tngs}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-redis-tngs}"
+TNGS_SERVER_CONTAINER="${TNGS_SERVER_CONTAINER:-tngs-server-prod}"
 
 mkdir -p "$(dirname "${LOG_FILE}")"
 exec >>"${LOG_FILE}" 2>&1
@@ -52,6 +53,7 @@ stop_container_if_running() {
 main() {
   log "正在停止服务"
   stop_pending_install_unit
+  stop_container_if_running "${TNGS_SERVER_CONTAINER}"
   stop_container_if_running "${MYSQL_CONTAINER}"
   stop_container_if_running "${REDIS_CONTAINER}"
   log "卸载流程执行完成。"

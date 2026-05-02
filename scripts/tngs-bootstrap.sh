@@ -15,6 +15,13 @@ REDIS_IMAGE_ARCHIVE_NAME="${REDIS_IMAGE_ARCHIVE_NAME:-redis_latest.tar}"
 REDIS_DATA_DIR="${REDIS_DATA_DIR:-/tNGS/data/redis/data}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-123456}"
 
+TNGS_SERVER_IMAGE="${TNGS_SERVER_IMAGE:-tngs-server-prod:1.0.0}"
+TNGS_SERVER_CONTAINER="${TNGS_SERVER_CONTAINER:-tngs-server-prod}"
+TNGS_SERVER_IMAGE_ARCHIVE_NAME="${TNGS_SERVER_IMAGE_ARCHIVE_NAME:-tngs-server-prod-1.0.0.tar}"
+TNGS_PROJECT_PROD_DIR="${TNGS_PROJECT_PROD_DIR:-/tngs_project_prod}"
+PROJECT_DIR="${PROJECT_DIR:-/project}"
+TNGS_SERVER_LOG_DIR="${TNGS_SERVER_LOG_DIR:-/tNGS/server/logs}"
+
 TZ_VALUE="${TZ_VALUE:-Asia/Shanghai}"
 LOG_FILE="${LOG_FILE:-/var/log/tngs-bootstrap.log}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -218,6 +225,7 @@ ensure_image() {
 ensure_bundled_archives() {
   local mysql_archive="${IMAGE_DIR}/${MYSQL_IMAGE_ARCHIVE_NAME}"
   local redis_archive="${IMAGE_DIR}/${REDIS_IMAGE_ARCHIVE_NAME}"
+  local tngs_server_archive="${IMAGE_DIR}/${TNGS_SERVER_IMAGE_ARCHIVE_NAME}"
 
   log "正在检查 RPM 内置 Docker 镜像文件目录：${IMAGE_DIR}"
   if [[ ! -f "${mysql_archive}" ]]; then
@@ -226,7 +234,12 @@ ensure_bundled_archives() {
   fi
 
   if [[ ! -f "${redis_archive}" ]]; then
-    log "缺少 RPM 内置 Redis 镜像文件：${redis_archive}"
+    log "Missing bundled Redis image archive: ${redis_archive}"
+    exit 1
+  fi
+
+  if [[ ! -f "${tngs_server_archive}" ]]; then
+    log "Missing bundled tngs-server-prod image archive: ${tngs_server_archive}"
     exit 1
   fi
 
@@ -235,8 +248,8 @@ ensure_bundled_archives() {
 }
 
 ensure_data_dirs() {
-  log "正在创建服务数据目录..."
-  mkdir -p "${MYSQL_DATA_DIR}" "${REDIS_DATA_DIR}"
+  log "Creating service data directories."
+  mkdir -p "${MYSQL_DATA_DIR}" "${REDIS_DATA_DIR}" "${TNGS_PROJECT_PROD_DIR}" "${PROJECT_DIR}" "${TNGS_SERVER_LOG_DIR}"
 }
 
 ensure_mysql_container() {
@@ -298,6 +311,36 @@ ensure_redis_container() {
     --requirepass "${REDIS_PASSWORD}" >/dev/null
 }
 
+ensure_tngs_server_container() {
+  local running
+  local exists
+
+  running="$(docker ps --filter "name=^/${TNGS_SERVER_CONTAINER}$" --format '{{.Names}}' || true)"
+  if [[ "${running}" == "${TNGS_SERVER_CONTAINER}" ]]; then
+    log "tngs-server-prod container is already running: ${TNGS_SERVER_CONTAINER}"
+    return
+  fi
+
+  exists="$(docker ps -a --filter "name=^/${TNGS_SERVER_CONTAINER}$" --format '{{.Names}}' || true)"
+  if [[ "${exists}" == "${TNGS_SERVER_CONTAINER}" ]]; then
+    log "Starting existing tngs-server-prod container: ${TNGS_SERVER_CONTAINER}"
+    docker start "${TNGS_SERVER_CONTAINER}" >/dev/null
+    return
+  fi
+
+  log "Creating and starting tngs-server-prod container: ${TNGS_SERVER_CONTAINER}"
+  docker run \
+    -d \
+    -e spring_env=prod \
+    -p 58081:8080 \
+    --name "${TNGS_SERVER_CONTAINER}" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v "${TNGS_PROJECT_PROD_DIR}:/tngs_project_prod" \
+    -v "${PROJECT_DIR}:/project" \
+    -v "${TNGS_SERVER_LOG_DIR}:/tNGS/server/logs" \
+    "${TNGS_SERVER_IMAGE}" >/dev/null
+}
+
 wait_for_mysql_before_sql() {
   log "MySQL 容器启动后等待 ${MYSQL_SQL_WAIT_SECONDS} 秒，再执行 SQL 初始化。"
   sleep "${MYSQL_SQL_WAIT_SECONDS}"
@@ -356,17 +399,19 @@ execute_sql_files() {
 }
 
 main() {
-  run_step "检查 root 权限" require_root
-  run_step "检查操作系统" ensure_rocky_like
-  run_step "检查并安装 Docker" ensure_docker
-  run_step "检查 RPM 内置镜像文件" ensure_bundled_archives
-  run_step "创建数据目录" ensure_data_dirs
-  run_step "导入 MySQL 镜像" ensure_image "${MYSQL_IMAGE}" "${IMAGE_DIR}/${MYSQL_IMAGE_ARCHIVE_NAME}"
-  run_step "导入 Redis 镜像" ensure_image "${REDIS_IMAGE}" "${IMAGE_DIR}/${REDIS_IMAGE_ARCHIVE_NAME}"
-  run_step "启动 MySQL 容器" ensure_mysql_container
-  run_step "执行 SQL 初始化" execute_sql_files
-  run_step "启动 Redis 容器" ensure_redis_container
-  log "安装流程执行完成。"
+  run_step "Check root privileges" require_root
+  run_step "Check operating system" ensure_rocky_like
+  run_step "Check and install Docker" ensure_docker
+  run_step "Check bundled image archives" ensure_bundled_archives
+  run_step "Create data directories" ensure_data_dirs
+  run_step "Import Redis image" ensure_image "${REDIS_IMAGE}" "${IMAGE_DIR}/${REDIS_IMAGE_ARCHIVE_NAME}"
+  run_step "Import MySQL image" ensure_image "${MYSQL_IMAGE}" "${IMAGE_DIR}/${MYSQL_IMAGE_ARCHIVE_NAME}"
+  run_step "Import tngs-server-prod image" ensure_image "${TNGS_SERVER_IMAGE}" "${IMAGE_DIR}/${TNGS_SERVER_IMAGE_ARCHIVE_NAME}"
+  run_step "Start Redis container" ensure_redis_container
+  run_step "Start MySQL container" ensure_mysql_container
+  run_step "Execute SQL initialization" execute_sql_files
+  run_step "Start tngs-server-prod container" ensure_tngs_server_container
+  log "Install flow completed."
 }
 
 main "$@"
